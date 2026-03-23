@@ -7,6 +7,7 @@ interface KPICardProps {
   icon: IconType
   trend: string
   color: 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'indigo' | 'yellow'
+  onClick?: () => void
 }
 
 const colorClasses = {
@@ -19,11 +20,26 @@ const colorClasses = {
   yellow: 'bg-yellow-50 text-yellow-600',
 }
 
-export default function KPICard({ title, value, icon: Icon, trend, color }: KPICardProps) {
+export default function KPICard({ title, value, icon: Icon, trend, color, onClick }: KPICardProps) {
   const isPositive = !trend.includes('-') && trend !== 'Critical'
-  
+  const interactive = Boolean(onClick)
+
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex-1 min-w-[200px]">
+    <div
+      className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex-1 min-w-[200px] ${
+        interactive ? 'cursor-pointer transition hover:border-primary-300 hover:shadow-md' : ''
+      }`}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (!interactive || !onClick) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
+    >
       <div className="flex items-center justify-between">
         <div className="flex-1">
           <p className="text-xs font-medium text-gray-600">{title}</p>

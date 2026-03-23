@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { FiTruck, FiClock, FiCheckCircle, FiSearch, FiChevronLeft, FiChevronRight, FiAlertCircle } from 'react-icons/fi'
+import { FiTruck, FiClock, FiCheckCircle, FiSearch, FiChevronLeft, FiChevronRight, FiAlertCircle, FiFilter } from 'react-icons/fi'
 import { useNavigate } from 'react-router-dom'
 import { collection, onSnapshot, query, where, orderBy, limit, getDocs } from 'firebase/firestore'
 import { db, SERVICE_STATION_ID, SUB_STATION_ID } from '../../lib/firebase'
@@ -12,19 +12,25 @@ import {
 } from '../../lib/workshopSeed'
 import { useWorkshopReport } from '../../context/WorkshopReportContext'
 
-interface VehicleStatus {
+export interface VehicleStatus {
+  serialNo: string
   regNo: string
   advisor: string
   model: string
   serviceType: string
   status: 'pending' | 'in-progress' | 'completed'
+  gateIn: string | Date | null
   jcOpening: string | Date | null
-  washing: string | Date | null
-  shopFloor: string | Date | null
-  roadTest: string | Date | null
-  delivery: string | Date | null
+  washingIn: string | Date | null
+  shopFloorIn: string | Date | null
+  bayIn: string | Date | null
+  roadTestOut: string | Date | null
+  billing: string | Date | null
+  gateOut: string | Date | null
   inTime: string
   jobCardId?: string
+  lastEvent?: string
+  jobCardStatus?: string
 }
 
 interface JobCardFromFirestore {
@@ -32,14 +38,24 @@ interface JobCardFromFirestore {
   vehicleRegistrationNumber?: string
   lastEvent?: string
   status?: string
-  jcDetails?: { SRV_SDV_NAME?: string; SRV_MODEL?: string; SRV_TYPE?: string; JC_OPEN_DATE?: string }
+  jcDetails?: {
+    SRV_SDV_NAME?: string
+    SRV_MODEL?: string
+    SRV_TYPE?: string
+    JC_OPEN_DATE?: string
+    SRV_JC_NO?: string
+    JOB_CARD_NO?: string
+  }
   vehicleDetails?: { model?: string }
   createdAt?: { toDate?: () => Date }
 }
 
 interface VehicleTickerProps {
   mode?: 'time' | 'status'
+  onVehiclesChange?: (vehicles: VehicleStatus[]) => void
 }
+
+type FilterKey = 'serialNo' | 'regNo' | 'advisor' | 'model' | 'serviceType' | 'status'
 
 const fetchLatestEvent = async (jobCardId: string, eventType: string): Promise<Date | null> => {
   try {
@@ -152,42 +168,60 @@ const fetchLatestEvent = async (jobCardId: string, eventType: string): Promise<D
   return null
 }
 
+async function fetchLatestFirst(jobCardId: string, types: string[]): Promise<Date | null> {
+  for (const t of types) {
+    const d = await fetchLatestEvent(jobCardId, t).catch(() => null)
+    if (d) return d
+  }
+  return null
+}
+
 async function mapJobCardToVehicleStatus(jc: JobCardFromFirestore): Promise<VehicleStatus> {
   const statusMap = { PENDING: 'pending' as const, OPEN: 'in-progress' as const, BILLED: 'completed' as const }
   const ts = jc.createdAt?.toDate?.() || jc.jcDetails?.JC_OPEN_DATE
   const inTime = ts ? (ts instanceof Date ? ts.toTimeString().slice(0, 5) : ts.slice(-5)) : '-'
-  
+
   const jobCardId = jc.id
-  
-  // Fetch latest events for each stage
-  const [jcOpening, washing, shopFloor, roadTest, finalExit, delivered] = await Promise.all([
-    fetchLatestEvent(jobCardId, 'JC_OPENED').catch(() => null),
-    fetchLatestEvent(jobCardId, 'WASH_IN').catch(() => null) || fetchLatestEvent(jobCardId, 'WASHING').catch(() => null),
-    fetchLatestEvent(jobCardId, 'SHOP_FLOOR_ENTRY').catch(() => null) || fetchLatestEvent(jobCardId, 'SHOP_FLOOR').catch(() => null),
-    fetchLatestEvent(jobCardId, 'ROAD_TEST_QUEUE_IN').catch(() => null) || fetchLatestEvent(jobCardId, 'ROAD_TEST').catch(() => null),
-    fetchLatestEvent(jobCardId, 'FINAL_EXIT').catch(() => null),
-    fetchLatestEvent(jobCardId, 'DELIVERED').catch(() => null),
-  ])
-  
-  const delivery = finalExit || delivered
+  const serialNo = jc.jcDetails?.SRV_JC_NO ?? jc.jcDetails?.JOB_CARD_NO ?? jc.id.slice(0, 8)
+
+  const [gateIn, jcOpening, washingIn, shopFloorIn, bayIn, roadTestOut, billingTs, gateOutTs] =
+    await Promise.all([
+      fetchLatestFirst(jobCardId, ['GATE_IN', 'EVENT_IN']),
+      fetchLatestEvent(jobCardId, 'JC_OPENED').catch(() => null),
+      fetchLatestFirst(jobCardId, ['WASH_IN', 'WASHING']),
+      fetchLatestFirst(jobCardId, ['SHOP_FLOOR_ENTRY', 'SHOP_FLOOR']),
+      fetchLatestEvent(jobCardId, 'BAY_IN').catch(() => null),
+      fetchLatestFirst(jobCardId, ['ROAD_TEST_QUEUE_OUT', 'ROAD_TEST']),
+      fetchLatestFirst(jobCardId, ['BILLING', 'INVOICE_GENERATED', 'INVOICE', 'JC_BILLED']),
+      fetchLatestFirst(jobCardId, ['GATE_OUT', 'FINAL_EXIT', 'DELIVERED']),
+    ])
+
+  const billing =
+    billingTs || (jc.status === 'BILLED' ? ('Billed' as const) : null)
 
   return {
+    serialNo,
     regNo: jc.vehicleRegistrationNumber || jc.id || '-',
     advisor: jc.jcDetails?.SRV_SDV_NAME || '-',
     model: jc.jcDetails?.SRV_MODEL || jc.vehicleDetails?.model || '-',
     serviceType: jc.jcDetails?.SRV_TYPE || '-',
     status: statusMap[jc.status as keyof typeof statusMap] || 'pending',
+    gateIn,
     jcOpening,
-    washing,
-    shopFloor,
-    roadTest,
-    delivery: delivery || (jc.status === 'BILLED' ? 'Billed' : null),
+    washingIn,
+    shopFloorIn,
+    bayIn,
+    roadTestOut,
+    billing,
+    gateOut: gateOutTs,
     inTime,
     jobCardId,
+    lastEvent: jc.lastEvent,
+    jobCardStatus: jc.status,
   }
 }
 
-export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
+export default function VehicleTicker({ mode = 'status', onVehiclesChange }: VehicleTickerProps) {
   const { reportDate } = useWorkshopReport()
   const [jobCards, setJobCards] = useState<JobCardFromFirestore[]>([])
   const [vehicles, setVehicles] = useState<VehicleStatus[]>([])
@@ -211,23 +245,35 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
             const event = [...v.events].reverse().find((e) => e.eventType === eventType)
             return parseSeedTimestamp(event?.timestampText, year)
           }
-          const gateIn = findTime('GATE_IN')
+          const findFirst = (types: string[]) => {
+            for (const t of types) {
+              const d = findTime(t)
+              if (d) return d
+            }
+            return null
+          }
+          const gateIn = findTime('GATE_IN') || findTime('EVENT_IN')
+          const billingDate = findFirst(['BILLING', 'INVOICE_GENERATED', 'INVOICE', 'JC_BILLED'])
+          const billing = billingDate || (v.status === 'BILLED' ? ('Billed' as const) : null)
           return {
+            serialNo: v.jobCardNumber || v.id.slice(0, 8),
             regNo: v.vehicleRegistrationNumber,
             advisor: v.jcDetails?.SRV_SDV_NAME || '-',
             model: v.jcDetails?.SRV_MODEL || '-',
             serviceType: v.jcDetails?.SRV_TYPE || 'General Service',
             status: v.status === 'BILLED' ? 'completed' : v.status === 'OPEN' ? 'in-progress' : 'pending',
+            gateIn,
             jcOpening: findTime('JC_OPENED') || gateIn,
-            washing: findTime('WASH_IN'),
-            shopFloor: findTime('SHOP_FLOOR_ENTRY'),
-            roadTest: findTime('ROAD_TEST') || null,
-            delivery:
-              findTime('FINAL_EXIT') ||
-              findTime('GATE_EXIT') ||
-              (v.status === 'BILLED' ? 'Billed' : null),
+            washingIn: findTime('WASH_IN'),
+            shopFloorIn: findTime('SHOP_FLOOR_ENTRY'),
+            bayIn: findTime('BAY_IN'),
+            roadTestOut: findFirst(['ROAD_TEST_QUEUE_OUT', 'ROAD_TEST']),
+            billing,
+            gateOut: findFirst(['GATE_OUT', 'FINAL_EXIT', 'GATE_EXIT', 'DELIVERED']),
             inTime: gateIn ? format(gateIn, 'HH:mm') : '-',
             jobCardId: v.id,
+            lastEvent: v.lastEvent,
+            jobCardStatus: v.status,
           }
         })
         setJobCards([])
@@ -277,37 +323,82 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
     return () => unsub()
   }, [])
   const [searchQuery, setSearchQuery] = useState('')
+  const [openFilterKey, setOpenFilterKey] = useState<FilterKey | null>(null)
+  const [columnFilters, setColumnFilters] = useState<Record<FilterKey, string>>({
+    serialNo: 'all',
+    regNo: 'all',
+    advisor: 'all',
+    model: 'all',
+    serviceType: 'all',
+    status: 'all',
+  })
   const navigate = useNavigate()
 
   const itemsPerPage = 5
 
-  const formatEventTime = (value: string | Date | null): string => {
-    if (!value) return '-'
-    if (value === 'Pending' || value === 'Billed') return value
-    if (typeof value === 'string' && value !== '-') return value
-    if (value instanceof Date) {
-      return format(value, 'HH:mm')
-    }
-    return '-'
+  const isStageComplete = (value: string | Date | null): boolean => {
+    if (value == null || value === '-' || value === 'Pending') return false
+    if (typeof value === 'string' && value.toLowerCase() === 'pending') return false
+    return true
   }
 
-  const renderStageIcon = (value: string | Date | null) => {
-    if (!value || value === '-' || value === 'Pending' || (typeof value === 'string' && value.toLowerCase() === 'pending')) {
-      return (
-        <span className="inline-flex items-center space-x-1 text-orange-600">
-          <FiAlertCircle className="w-3 h-3" />
-          <span className="text-xs">Pending</span>
-        </span>
-      )
-    }
-    const timeStr = formatEventTime(value)
+  /** Compact cell: ✓ or Pending; full date/time and label on hover */
+  const renderStageHoverCell = (stageLabel: string, value: string | Date | null) => {
+    const done = isStageComplete(value)
+    const titleFallback = done
+      ? value instanceof Date
+        ? `${stageLabel}: ${format(value, 'dd MMM yyyy, HH:mm:ss')}`
+        : `${stageLabel}: ${String(value)}`
+      : `${stageLabel}: Pending (no event recorded)`
+
     return (
-      <span className="inline-flex items-center space-x-1 text-green-600">
-        <FiCheckCircle className="w-3 h-3" />
-        <span className="text-xs">{timeStr}</span>
+      <span
+        className="group relative inline-flex min-h-[1.25rem] cursor-help items-center justify-start"
+        title={titleFallback}
+      >
+        {done ? (
+          <FiCheckCircle className="h-4 w-4 shrink-0 text-green-600" aria-hidden />
+        ) : (
+          <span className="text-xs font-medium text-orange-600">Pending</span>
+        )}
+        <span
+          role="tooltip"
+          className="pointer-events-none absolute left-0 top-full z-[100] mt-1 hidden w-max max-w-[min(260px,85vw)] rounded-md border border-gray-700 bg-gray-900 px-2.5 py-2 text-left text-xs text-white shadow-lg group-hover:block"
+        >
+          {done ? (
+            <span className="block space-y-1">
+              <span className="block font-semibold text-white">{stageLabel}</span>
+              {value instanceof Date ? (
+                <>
+                  <span className="block text-gray-200">{format(value, 'EEEE, dd MMM yyyy')}</span>
+                  <span className="block font-mono tabular-nums text-white">{format(value, 'HH:mm:ss')}</span>
+                </>
+              ) : (
+                <span className="block text-gray-200">{String(value)}</span>
+              )}
+            </span>
+          ) : (
+            <span className="block space-y-1">
+              <span className="block font-semibold text-white">{stageLabel}</span>
+              <span className="block text-orange-200">Pending — no event recorded yet</span>
+            </span>
+          )}
+        </span>
       </span>
     )
   }
+
+  const filterOptions = useMemo<Record<FilterKey, string[]>>(
+    () => ({
+      serialNo: Array.from(new Set(vehicles.map((v) => v.serialNo).filter(Boolean))).sort(),
+      regNo: Array.from(new Set(vehicles.map((v) => v.regNo).filter(Boolean))).sort(),
+      advisor: Array.from(new Set(vehicles.map((v) => v.advisor).filter(Boolean))).sort(),
+      model: Array.from(new Set(vehicles.map((v) => v.model).filter(Boolean))).sort(),
+      serviceType: Array.from(new Set(vehicles.map((v) => v.serviceType).filter(Boolean))).sort(),
+      status: ['pending', 'in-progress', 'completed'],
+    }),
+    [vehicles]
+  )
 
   const filteredVehicles = useMemo(() => {
     let filtered = vehicles
@@ -317,6 +408,7 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
       const query = searchQuery.toLowerCase()
       filtered = filtered.filter(
         (v) =>
+          v.serialNo.toLowerCase().includes(query) ||
           v.regNo.toLowerCase().includes(query) ||
           v.advisor.toLowerCase().includes(query) ||
           v.model.toLowerCase().includes(query) ||
@@ -324,8 +416,15 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
       )
     }
 
+    ;(Object.keys(columnFilters) as FilterKey[]).forEach((key) => {
+      const selected = columnFilters[key]
+      if (selected !== 'all') {
+        filtered = filtered.filter((v) => String(v[key]) === selected)
+      }
+    })
+
     return filtered
-  }, [vehicles, searchQuery])
+  }, [vehicles, searchQuery, columnFilters])
 
   const totalPages = Math.ceil(filteredVehicles.length / itemsPerPage)
   const paginatedVehicles = filteredVehicles.slice(
@@ -338,11 +437,64 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
     setCurrentPage(1)
   }
 
+  const applyColumnFilter = (key: FilterKey, value: string) => {
+    setColumnFilters((prev) => ({ ...prev, [key]: value }))
+    setCurrentPage(1)
+    setOpenFilterKey(null)
+  }
+
+  const renderHeaderWithFilter = (label: string, key?: FilterKey, thClassName?: string) => (
+    <th className={thClassName ?? 'text-left py-3 px-4 font-semibold text-gray-700'}>
+      <div className="relative inline-flex items-center gap-1">
+        <span>{label}</span>
+        {key && (
+          <>
+            <button
+              type="button"
+              onClick={() => setOpenFilterKey((curr) => (curr === key ? null : key))}
+              className={`inline-flex h-4 w-4 items-center justify-center rounded hover:bg-gray-200 ${
+                columnFilters[key] !== 'all' ? 'text-primary-600' : 'text-gray-400'
+              }`}
+              title={`Filter ${label}`}
+            >
+              <FiFilter className="h-3 w-3" />
+            </button>
+            {openFilterKey === key && (
+              <div className="absolute top-full left-0 mt-1 z-[120] min-w-[140px] rounded-md border border-gray-200 bg-white shadow-lg p-1">
+                <button
+                  type="button"
+                  onClick={() => applyColumnFilter(key, 'all')}
+                  className="w-full text-left px-2 py-1 text-xs rounded hover:bg-gray-50"
+                >
+                  All
+                </button>
+                {filterOptions[key].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => applyColumnFilter(key, value)}
+                    className="w-full text-left px-2 py-1 text-xs rounded hover:bg-gray-50"
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </th>
+  )
+
+  useEffect(() => {
+    onVehiclesChange?.(vehicles)
+  }, [vehicles, onVehiclesChange])
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900">Vehicle Tracking Ticker</h2>
-        <div className="relative">
+        <div className="relative shrink-0">
           <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
           <input
             type="text"
@@ -354,35 +506,43 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overflow-y-visible">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Reg No.</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Advisor</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Model</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Service Type</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">JC Opening</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Washing</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Shop Floor</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Road Test</th>
-              <th className="text-left py-3 px-4 font-semibold text-gray-700">Delivery</th>
+              {renderHeaderWithFilter(
+                'Serial',
+                'serialNo',
+                'text-left py-3 px-1 font-semibold text-gray-700 w-14 max-w-[4rem] min-w-[3rem]'
+              )}
+              {renderHeaderWithFilter('Reg No.', 'regNo')}
+              {renderHeaderWithFilter('Advisor', 'advisor')}
+              {renderHeaderWithFilter('Model', 'model')}
+              {renderHeaderWithFilter('Service Type', 'serviceType')}
+              {renderHeaderWithFilter('Gate In')}
+              {renderHeaderWithFilter('JC Opening')}
+              {renderHeaderWithFilter('Washing In')}
+              {renderHeaderWithFilter('Shop Floor In')}
+              {renderHeaderWithFilter('Bay In')}
+              {renderHeaderWithFilter('Road Test Out')}
+              {renderHeaderWithFilter('Billing')}
+              {renderHeaderWithFilter('Gate Out')}
               {mode === 'status' && (
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
+                renderHeaderWithFilter('Status', 'status')
               )}
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={mode === 'status' ? 10 : 9} className="py-8 text-center text-gray-500">
+                <td colSpan={mode === 'status' ? 14 : 13} className="py-8 text-center text-gray-500">
                   Loading vehicles...
                 </td>
               </tr>
             ) : paginatedVehicles.length === 0 ? (
               <tr>
                 <td
-                  colSpan={mode === 'status' ? 10 : 9}
+                  colSpan={mode === 'status' ? 14 : 13}
                   className="py-8 text-center text-gray-500"
                 >
                   No vehicles found
@@ -391,6 +551,9 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
             ) : (
               paginatedVehicles.map((vehicle, index) => (
                 <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-1 w-14 max-w-[4rem] text-xs text-gray-600 truncate" title={vehicle.serialNo}>
+                    {vehicle.serialNo}
+                  </td>
                   <td className="py-3 px-4">
                     <div className="flex items-center space-x-2">
                       <FiTruck className="w-4 h-4 text-primary-600" />
@@ -411,14 +574,29 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
                   </td>
                   {mode === 'status' ? (
                     <>
-                      <td className="py-3 px-4">
-                        {renderStageIcon(vehicle.jcOpening)}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Gate In', vehicle.gateIn)}
                       </td>
-                      <td className="py-3 px-4">{renderStageIcon(vehicle.washing)}</td>
-                      <td className="py-3 px-4">{renderStageIcon(vehicle.shopFloor)}</td>
-                      <td className="py-3 px-4">{renderStageIcon(vehicle.roadTest)}</td>
-                      <td className="py-3 px-4">
-                        {renderStageIcon(vehicle.delivery)}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('JC Opening', vehicle.jcOpening)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Washing In', vehicle.washingIn)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Shop Floor In', vehicle.shopFloorIn)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Bay In', vehicle.bayIn)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Road Test Out', vehicle.roadTestOut)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Billing', vehicle.billing)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Gate Out', vehicle.gateOut)}
                       </td>
                       <td className="py-3 px-4">
                         {vehicle.status === 'completed' && (
@@ -443,40 +621,29 @@ export default function VehicleTicker({ mode = 'status' }: VehicleTickerProps) {
                     </>
                   ) : (
                     <>
-                      <td className="py-3 px-4">
-                        {vehicle.jcOpening && vehicle.jcOpening instanceof Date ? (
-                          <span className="flex items-center space-x-1">
-                            <FiClock className="w-3 h-3 text-green-600" />
-                            <span>{format(vehicle.jcOpening, 'HH:mm')}</span>
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Gate In', vehicle.gateIn)}
                       </td>
-                      <td className="py-3 px-4">
-                        {vehicle.washing && vehicle.washing instanceof Date ? format(vehicle.washing, 'HH:mm') : '-'}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('JC Opening', vehicle.jcOpening)}
                       </td>
-                      <td className="py-3 px-4">
-                        {vehicle.shopFloor && vehicle.shopFloor instanceof Date ? format(vehicle.shopFloor, 'HH:mm') : '-'}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Washing In', vehicle.washingIn)}
                       </td>
-                      <td className="py-3 px-4">
-                        {vehicle.roadTest && vehicle.roadTest instanceof Date ? format(vehicle.roadTest, 'HH:mm') : '-'}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Shop Floor In', vehicle.shopFloorIn)}
                       </td>
-                      <td className="py-3 px-4">
-                        {vehicle.delivery && vehicle.delivery instanceof Date ? (
-                          <span className="flex items-center space-x-1 text-green-600">
-                            <FiCheckCircle className="w-4 h-4" />
-                            <span>{format(vehicle.delivery, 'HH:mm')}</span>
-                          </span>
-                        ) : vehicle.delivery === 'Pending' || !vehicle.delivery ? (
-                          <span className="text-orange-600 font-medium">Pending</span>
-                        ) : typeof vehicle.delivery === 'string' ? (
-                          <span className="text-green-600">{vehicle.delivery}</span>
-                        ) : (
-                          <span className="text-green-600">
-                            {format(vehicle.delivery, 'HH:mm')}
-                          </span>
-                        )}
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Bay In', vehicle.bayIn)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Road Test Out', vehicle.roadTestOut)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Billing', vehicle.billing)}
+                      </td>
+                      <td className="relative overflow-visible py-3 px-4 align-middle">
+                        {renderStageHoverCell('Gate Out', vehicle.gateOut)}
                       </td>
                     </>
                   )}

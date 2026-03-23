@@ -19,11 +19,11 @@ interface SidebarProps {
 }
 
 const menuItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: FiHome },
-  { href: '/reception', label: 'Reception Dashboard', icon: FiUser },
+  { href: '/dashboard', label: 'Performance Snapshot', icon: FiHome },
+  { href: '/reception', label: 'Front Office Dashboard', icon: FiUser },
   { href: '/real-time-monitoring', label: 'Real-Time Monitoring', icon: FiMonitor },
-  { href: '/bay-status', label: 'Bay Status', icon: FiGrid },
-  { href: '/reports', label: 'Reports', icon: FiBarChart2 },
+  { href: '/bay-status', label: 'Bay Management', icon: FiGrid },
+  { href: '/reports', label: 'Performance Report', icon: FiBarChart2 },
   // { href: '/customer-communication', label: 'Customer Communication', icon: FiMessageSquare },
   { href: '/vehicle-assessment', label: '360° Vehicle Assessment', icon: FiCamera },
   { href: '/administration', label: 'Administration', icon: FiSettings },

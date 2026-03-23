@@ -1,15 +1,20 @@
-import { useState } from 'react'
-import { 
-  FiTool, 
-  FiCheckCircle, 
-  FiClock, 
-  FiTruck, 
-  FiUser, 
-  FiEdit, 
-  FiX, 
-  FiPlus,
-  FiAlertCircle,
-  FiUsers
+import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { format } from 'date-fns'
+import {
+  FiTool,
+  FiCheckCircle,
+  FiClock,
+  FiTruck,
+  FiUser,
+  FiX,
+  FiUsers,
+  FiGrid,
+  FiMaximize2,
+  FiMinimize2,
 } from 'react-icons/fi'
 
 interface Bay {
@@ -33,6 +38,8 @@ interface Vehicle {
   customerName: string
   model: string
   serviceType: string
+  serviceAdvisor?: string
+  jobCardId?: string
   status: 'gate-in' | 'washing' | 'ready-for-allocation' | 'in-service' | 'completed'
   currentBayId?: string
 }
@@ -141,6 +148,8 @@ const mockVehicles: Vehicle[] = [
     customerName: 'John Doe',
     model: 'Swift',
     serviceType: 'Periodic Service',
+    serviceAdvisor: 'Amit Patel',
+    jobCardId: 'JC1001',
     status: 'in-service',
     currentBayId: '1',
   },
@@ -150,6 +159,8 @@ const mockVehicles: Vehicle[] = [
     customerName: 'Jane Smith',
     model: 'Baleno',
     serviceType: 'Repair',
+    serviceAdvisor: 'Priya Sharma',
+    jobCardId: 'JC1002',
     status: 'in-service',
     currentBayId: '2',
   },
@@ -159,6 +170,8 @@ const mockVehicles: Vehicle[] = [
     customerName: 'Robert Johnson',
     model: 'Dzire',
     serviceType: 'Periodic Service',
+    serviceAdvisor: 'Sneha Verma',
+    jobCardId: 'JC1003',
     status: 'in-service',
     currentBayId: '4',
   },
@@ -168,6 +181,8 @@ const mockVehicles: Vehicle[] = [
     customerName: 'Sarah Williams',
     model: 'Vitara',
     serviceType: 'Repair',
+    serviceAdvisor: 'Anjali Mehta',
+    jobCardId: 'JC1004',
     status: 'in-service',
     currentBayId: '8',
   },
@@ -278,15 +293,168 @@ const mockTechnicians: Technician[] = [
   },
 ]
 
+function SortableAllocationBayCard({
+  bay,
+  getStatusColor,
+  getStatusIcon,
+  getStatusLabel,
+  onRemoveVehicle,
+  onRemoveTechnician,
+  onOpenAllocationModal,
+  getBayAllocationDetails,
+}: {
+  bay: Bay
+  getStatusColor: (status: string) => string
+  getStatusIcon: (status: string) => ReactNode
+  getStatusLabel: (status: string) => string
+  onRemoveVehicle: (bayId: string) => void
+  onRemoveTechnician: (bayId: string, techId: string) => void
+  onOpenAllocationModal: (bay: Bay) => void
+  getBayAllocationDetails: (bay: Bay) => {
+    technician: string
+    advisor: string
+    service: string
+    jobCard: string
+    inTime: string
+  }
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: bay.id,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.88 : 1,
+    zIndex: isDragging ? 20 : undefined,
+  }
+  const allocationDetails = getBayAllocationDetails(bay)
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`rounded-lg border-2 p-4 ${getStatusColor(bay.status)} transition-shadow hover:shadow-md cursor-grab active:cursor-grabbing touch-none select-none`}
+    >
+      <div className="flex items-start justify-between mb-2 gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <FiGrid className="w-3.5 h-3.5 shrink-0 opacity-50" aria-hidden />
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold truncate">{bay.name}</h3>
+            <p className="text-xs mt-0.5 opacity-75 truncate">{bay.type}</p>
+          </div>
+        </div>
+        <div className="ml-1 shrink-0">{getStatusIcon(bay.status)}</div>
+      </div>
+
+      <div className="mb-2">
+        <span className="text-xs font-medium opacity-75">{getStatusLabel(bay.status)}</span>
+      </div>
+
+      {bay.status === 'occupied' && (
+        <div className="mt-3 pt-3 border-t border-current border-opacity-20 space-y-2">
+          <div className="text-xs grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1">
+            <div>Vehicle:</div>
+            <div className="font-semibold truncate">{bay.vehicleReg || '-'}</div>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onRemoveVehicle(bay.id)}
+              className="p-1 hover:bg-red-200 rounded opacity-75 hover:opacity-100 shrink-0 row-span-2 self-start"
+              title="Remove Vehicle"
+            >
+              <FiX className="w-3 h-3" />
+            </button>
+
+            <div>Technician:</div>
+            <div className="font-semibold truncate">{allocationDetails.technician}</div>
+
+            <div>Advisor:</div>
+            <div className="font-semibold truncate col-span-2">{allocationDetails.advisor}</div>
+
+            <div>Customer:</div>
+            <div className="font-semibold truncate col-span-2">{bay.customerName || '-'}</div>
+
+            <div>Service:</div>
+            <div className="font-semibold truncate col-span-2">{allocationDetails.service}</div>
+
+            <div>Job Card:</div>
+            <div className="font-semibold truncate col-span-2">{allocationDetails.jobCard}</div>
+
+            <div>In Time:</div>
+            <div className="font-semibold text-[11px] truncate col-span-2">{allocationDetails.inTime}</div>
+          </div>
+
+          {bay.technicians && bay.technicians.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {bay.technicians.map((tech, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs gap-1">
+                  <span className="truncate">{tech}</span>
+                  <button
+                    type="button"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => onRemoveTechnician(bay.id, bay.technicianIds?.[idx] || '')}
+                    className="p-0.5 hover:bg-red-200 rounded opacity-50 hover:opacity-100 shrink-0"
+                    title="Remove Technician"
+                  >
+                    <FiX className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {bay.status === 'vacant' && (
+        <div className="mt-3 pt-3 border-t border-current border-opacity-20 space-y-2">
+          <p className="text-xs font-medium text-green-700">Bay Vacant</p>
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => onOpenAllocationModal(bay)}
+            className="w-full px-2 py-1 text-xs bg-white bg-opacity-50 hover:bg-opacity-75 rounded border border-current border-opacity-30 flex items-center justify-center space-x-1"
+          >
+            <FiTruck className="w-3 h-3" />
+            <span>Assign Vehicle</span>
+          </button>
+        </div>
+      )}
+
+      {bay.status === 'maintenance' && (
+        <div className="mt-3 pt-3 border-t border-current border-opacity-20">
+          <p className="text-xs opacity-75">Under Maintenance</p>
+        </div>
+      )}
+
+      {bay.status === 'occupied' && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => onOpenAllocationModal(bay)}
+            className="w-full px-2 py-1 text-xs bg-white bg-opacity-50 hover:bg-opacity-75 rounded border border-current border-opacity-30 flex items-center justify-center space-x-1"
+          >
+            <FiUser className="w-3 h-3" />
+            <span>{bay.technicians && bay.technicians.length > 0 ? 'Edit Technicians' : 'Assign Technician'}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function BayStatus() {
-  const [selectedVehicle, setSelectedVehicle] = useState<any>(null)
+  const allocationRef = useRef<HTMLDivElement | null>(null)
   const [bays, setBays] = useState<Bay[]>(mockBays)
   const [vehicles] = useState<Vehicle[]>(mockVehicles)
   const [technicians] = useState<Technician[]>(mockTechnicians)
   const [selectedBay, setSelectedBay] = useState<Bay | null>(null)
   const [allocationModal, setAllocationModal] = useState<'assign-technician' | null>(null)
   const [selectedTechnicians, setSelectedTechnicians] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<'metrics' | 'allocation'>('metrics')
+  const [activeTab, setActiveTab] = useState<'metrics' | 'allocation'>('allocation')
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const availableVehicles = vehicles.filter(v => v.status === 'ready-for-allocation')
   const availableTechnicians = technicians.filter(t => t.isAvailable)
@@ -399,6 +567,37 @@ export default function BayStatus() {
     }
   }
 
+  const handleAllocationDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setBays((prev) => {
+      const oldIndex = prev.findIndex((b) => b.id === active.id)
+      const newIndex = prev.findIndex((b) => b.id === over.id)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      return arrayMove(prev, oldIndex, newIndex)
+    })
+  }
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement && allocationRef.current) {
+        await allocationRef.current.requestFullscreen()
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      }
+    } catch (error) {
+      console.error('Failed to toggle fullscreen', error)
+    }
+  }
+
   const getMaxTechniciansForBay = (bayType: string) => {
     if (bayType === '2-Tech Bay') return 2
     if (bayType === 'Express Bay') return 1
@@ -406,12 +605,26 @@ export default function BayStatus() {
     return 1
   }
 
+  const getBayAllocationDetails = (bay: Bay) => {
+    const vehicle = vehicles.find((v) => v.id === bay.vehicleId)
+    const technician = bay.technicians?.join(', ') || '-'
+    const advisor = vehicle?.serviceAdvisor || '-'
+    const service = vehicle?.serviceType || '-'
+    const jobCard = vehicle?.jobCardId || (bay.vehicleId ? `JC-${bay.vehicleId.toUpperCase()}` : '-')
+    const inTime = bay.startTime ? format(bay.startTime, 'dd MMM hh:mm a') : '-'
+    return { technician, advisor, service, jobCard, inTime }
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-white">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Bay Status</h1>
-        <p className="text-gray-600 mt-1">Complete bay allocation and management</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Central Bay Monitoring</h1>
+          <p className="text-gray-600 mt-1">
+            Oversee bay availability, assignments, and performance in one unified view.
+          </p>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -425,7 +638,7 @@ export default function BayStatus() {
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            Metrics
+            Bay Analytics
           </button>
           <button
             onClick={() => setActiveTab('allocation')}
@@ -435,7 +648,7 @@ export default function BayStatus() {
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            Allocation
+            Bay Allocation
           </button>
         </nav>
       </div>
@@ -525,157 +738,123 @@ export default function BayStatus() {
               </div>
             </div>
 
-            {/* Bay Utilization Heat Map */}
+            {/* Bay Utilization merged into analytics */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Bay Utilization Overview</h2>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {bays.map((bay) => {
                   const getUtilizationColor = (util: number) => {
-                    if (util >= 80) return 'bg-green-900 text-white'
-                    if (util >= 60) return 'bg-green-700 text-white'
-                    if (util >= 40) return 'bg-green-500 text-white'
-                    if (util >= 20) return 'bg-green-200 text-gray-800'
-                    return 'bg-white text-gray-800 border border-green-100'
+                    if (util >= 80) return 'bg-green-200 text-green-900 border-green-300'
+                    if (util >= 60) return 'bg-green-100 text-green-800 border-green-200'
+                    if (util >= 40) return 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    if (util >= 20) return 'bg-slate-50 text-slate-700 border-slate-200'
+                    return 'bg-white text-gray-600 border-gray-200'
                   }
-                  
+
                   return (
                     <div
                       key={bay.id}
-                      className={`p-4 rounded-lg border-2 transition-all hover:scale-105 cursor-pointer ${getUtilizationColor(bay.utilization)}`}
+                      className={`p-4 rounded-lg border transition-all hover:shadow-sm cursor-pointer ${getUtilizationColor(bay.utilization)}`}
                     >
                       <div className="text-center">
                         <p className="text-sm font-semibold mb-1">{bay.name}</p>
                         <p className="text-xs opacity-90 mb-2">{bay.type}</p>
                         <p className="text-2xl font-bold">{bay.utilization}%</p>
                         <p className="text-xs mt-1 opacity-75">
-                          {bay.status === 'occupied' ? 'In Use' : 
-                           bay.status === 'vacant' ? 'Available' : 'Maintenance'}
+                          {bay.status === 'occupied' ? 'In Use' : bay.status === 'vacant' ? 'Available' : 'Maintenance'}
                         </p>
                       </div>
                     </div>
                   )
                 })}
               </div>
-              <div className="mt-4 flex items-center justify-center space-x-4 text-xs">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
                 <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 bg-green-900 rounded"></div>
+                  <div className="w-4 h-4 bg-green-200 border border-green-300 rounded"></div>
                   <span>High (80-100%)</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 bg-green-700 rounded"></div>
-                  <span>Medium-High (60-79%)</span>
+                  <div className="w-4 h-4 bg-green-100 border border-green-200 rounded"></div>
+                  <span>Good (60-79%)</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 bg-green-500 rounded"></div>
-                  <span>Medium (40-59%)</span>
+                  <div className="w-4 h-4 bg-emerald-50 border border-emerald-200 rounded"></div>
+                  <span>Moderate (40-59%)</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 bg-green-200 rounded"></div>
+                  <div className="w-4 h-4 bg-slate-50 border border-slate-200 rounded"></div>
                   <span>Low (20-39%)</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 bg-white border border-green-100 rounded"></div>
+                  <div className="w-4 h-4 bg-white border border-gray-200 rounded"></div>
                   <span>Very Low (0-19%)</span>
                 </div>
               </div>
             </div>
+
           </div>
         )}
 
         {/* Allocation Tab */}
         {activeTab === 'allocation' && (
-          <div className="space-y-6">
+          <div ref={allocationRef} className="space-y-6">
             {/* All Bays Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* All Bays Grid (left, spans 2 columns on large screens) */}
+              {/* Draggable bay cards */}
               <div className="lg:col-span-2">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">All Bays</h2>
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {bays.map((bay) => (
-                    <div
-                      key={bay.id}
-                      className={`rounded-lg border-2 p-4 ${getStatusColor(bay.status)} transition-all hover:shadow-md`}
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <h3 className="text-base font-semibold">{bay.name}</h3>
-                          <p className="text-xs mt-0.5 opacity-75">{bay.type}</p>
-                        </div>
-                        <div className="ml-2">
-                          {getStatusIcon(bay.status)}
-                        </div>
-                      </div>
-
-                      <div className="mb-2">
-                        <span className="text-xs font-medium opacity-75">
-                          {getStatusLabel(bay.status)}
-                        </span>
-                      </div>
-
-                      {bay.status !== 'maintenance' && (
-                        <div className="mt-3 pt-3 border-t border-current border-opacity-20 space-y-2">
-                          {bay.status === 'occupied' && (
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <p className="text-xs font-medium truncate">{bay.vehicleReg}</p>
-                                <p className="text-xs opacity-75 truncate mt-0.5">{bay.customerName}</p>
-                              </div>
-                              <button
-                                onClick={() => handleRemoveVehicle(bay.id)}
-                                className="p-1 hover:bg-red-200 rounded opacity-75 hover:opacity-100"
-                                title="Remove Vehicle"
-                              >
-                                <FiX className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-
-                          {bay.technicians && bay.technicians.length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {bay.technicians.map((tech, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-xs">
-                                  <span className="truncate">{tech}</span>
-                                  <button
-                                    onClick={() => handleRemoveTechnician(bay.id, bay.technicianIds?.[idx] || '')}
-                                    className="p-0.5 hover:bg-red-200 rounded opacity-50 hover:opacity-100"
-                                    title="Remove Technician"
-                                  >
-                                    <FiX className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="mt-3">
-                            <button
-                              onClick={() => openAllocationModal(bay, 'assign-technician')}
-                              className="w-full px-2 py-1 text-xs bg-white bg-opacity-50 hover:bg-opacity-75 rounded border border-current border-opacity-30 flex items-center justify-center space-x-1"
-                            >
-                              <FiUser className="w-3 h-3" />
-                              <span>
-                                {bay.technicians && bay.technicians.length > 0
-                                  ? 'Edit Technicians'
-                                  : 'Add Technicians'}
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {bay.status === 'maintenance' && (
-                        <div className="mt-3 pt-3 border-t border-current border-opacity-20">
-                          <p className="text-xs opacity-75">Under Maintenance</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-800">Bay Management</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Drag cards to reorder bays. Save layout when you are done.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Placeholder: persist order to backend when available
+                      console.info('Bay layout order saved', bays.map((b) => b.id))
+                    }}
+                    className="w-fit px-2.5 py-1.5 rounded-md border border-primary-600 text-primary-700 hover:bg-primary-600 hover:text-white transition-all duration-200 font-semibold cursor-pointer inline-flex justify-center items-center text-sm gap-1.5 shrink-0"
+                  >
+                    Save Layout
+                    <FiCheckCircle className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void toggleFullscreen()}
+                    className="w-fit px-2.5 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all duration-200 font-semibold inline-flex justify-center items-center text-sm gap-1.5 shrink-0"
+                    title={isFullscreen ? 'Exit full screen allocation view' : 'Open full screen allocation view'}
+                  >
+                    {isFullscreen ? <FiMinimize2 className="w-4 h-4" /> : <FiMaximize2 className="w-4 h-4" />}
+                    <span>{isFullscreen ? 'Exit Full Screen' : 'Full Screen'}</span>
+                  </button>
                 </div>
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleAllocationDragEnd}>
+                  <SortableContext items={bays.map((b) => b.id)} strategy={rectSortingStrategy}>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {bays.map((bay) => (
+                        <SortableAllocationBayCard
+                          key={bay.id}
+                          bay={bay}
+                          getStatusColor={getStatusColor}
+                          getStatusIcon={getStatusIcon}
+                          getStatusLabel={getStatusLabel}
+                          onRemoveVehicle={handleRemoveVehicle}
+                          onRemoveTechnician={handleRemoveTechnician}
+                          onOpenAllocationModal={(b) => openAllocationModal(b, 'assign-technician')}
+                          getBayAllocationDetails={getBayAllocationDetails}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
               </div>
 
               {/* Right Sidebar - Available Vehicles */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-md font-semibold text-gray-900 mb-3">Available Vehicles</h3>
+                <h3 className="text-md font-semibold text-gray-900 mb-1">Allocation Pending</h3>
+                <p className="text-xs text-gray-500 mb-3">Vehicles ready to assign to a bay</p>
                 {availableVehicles.length > 0 ? (
                   <div className="space-y-2 max-h-[420px] overflow-y-auto">
                     {availableVehicles.map((vehicle) => (
@@ -696,6 +875,7 @@ export default function BayStatus() {
                 )}
               </div>
             </div>
+
           </div>
         )}
       </div>
@@ -712,7 +892,6 @@ export default function BayStatus() {
                 onClick={() => {
                   setAllocationModal(null)
                   setSelectedBay(null)
-                  setSelectedVehicle('')
                   setSelectedTechnicians([])
                 }}
                 className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"

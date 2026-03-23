@@ -69,7 +69,8 @@ export const USE_LOCAL_WORKSHOP_SEED =
  * Set `VITE_WORKSHOP_API_URL=http://localhost:5000` if frontend is served without proxy.
  */
 export function getWorkshopApiBase(): string {
-  return "https://encouraging-instrumental-mae-pie.trycloudflare.com"
+  // return "https://encouraging-instrumental-mae-pie.trycloudflare.com"4
+  return "http://localhost:5001"
   const v = import.meta.env.VITE_WORKSHOP_API_URL as string | undefined
   if (v === '' || v === undefined) return ''
   return String(v).replace(/\/$/, '')

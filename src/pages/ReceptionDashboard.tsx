@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { FiUser, FiClock, FiTruck, FiUserPlus, FiEdit, FiCheck, FiX, FiAward } from 'react-icons/fi'
+import { useEffect, useState } from 'react'
+import { FiUser, FiClock, FiTruck, FiUserPlus, FiX, FiAward } from 'react-icons/fi'
 import { format } from 'date-fns'
 
 type VehicleIssue = 'Engine' | 'Transmission' | 'Electrical' | 'AC' | 'Brakes' | 'Suspension' | 'Body' | 'General Service'
@@ -188,19 +188,37 @@ const mockVehicles: Vehicle[] = [
 export default function ReceptionDashboard() {
   const [vehicles, setVehicles] = useState<Vehicle[]>(mockVehicles)
   const [serviceAdvisors] = useState<ServiceAdvisor[]>(mockServiceAdvisors)
-  const [activeTab, setActiveTab] = useState<'assigned' | 'unassigned'>('unassigned')
+  const [activeTab, setActiveTab] = useState<'jc-pending' | 'jc-opened' | 'temp-mapping'>('jc-pending')
   const [assigningVehicleId, setAssigningVehicleId] = useState<string | null>(null)
   const [tempVehicleModal, setTempVehicleModal] = useState<{ vehicleId: string; regNo: string } | null>(null)
   const [tempRegInput, setTempRegInput] = useState('')
+  const [showAttendancePrompt, setShowAttendancePrompt] = useState(false)
+  const [attendanceMappingStatus, setAttendanceMappingStatus] = useState<'done' | 'not-done' | null>(null)
+  const [selectedMetric, setSelectedMetric] = useState<
+    'totalGateIn' | 'walkIns' | 'appointment' | 'jcOpened' | 'saAllocation' | null
+  >(null)
+  const [metricSearch, setMetricSearch] = useState('')
 
-  // JC-based grouping
-  const vehiclesWithSA = vehicles.filter(v => v.jcOpened)
-  const vehiclesWithoutSA = vehicles.filter(v => !v.jcOpened)
+  const jcOpenedVehicles = vehicles.filter((v) => v.jcOpened)
+  const jcPendingVehicles = vehicles.filter((v) => !v.jcOpened)
+  const walkInVehicles = vehicles.filter((v) => !v.appointment)
+  const appointmentVehicles = vehicles.filter((v) => v.appointment)
+  const saAllocatedVehicles = vehicles.filter((v) => Boolean(v.serviceAdvisorId))
+  const tempMappedVehicles = vehicles.filter((v) => v.tempVehicle)
+
+  useEffect(() => {
+    const promptKey = 'front-office-attendance-mapping-prompt-seen'
+    const seen = sessionStorage.getItem(promptKey)
+    if (!seen) {
+      setShowAttendancePrompt(true)
+      sessionStorage.setItem(promptKey, '1')
+    }
+  }, [])
 
   const getMatchingServiceAdvisors = (vehicleIssue: VehicleIssue) => {
     return serviceAdvisors
       .map(sa => {
-        const assignedVehicles = vehicles.filter(v => v.serviceAdvisorId === sa.id)
+        const assignedVehicles = vehicles.filter((v) => v.serviceAdvisorId === sa.id)
         return {
           ...sa,
           currentLoad: assignedVehicles.length,
@@ -215,23 +233,25 @@ export default function ReceptionDashboard() {
   }
 
   const handleAssignSA = (vehicleId: string, saId: string, saName: string) => {
-    setVehicles(vehicles.map(v =>
-      v.id === vehicleId
-        ? {
-            ...v,
-            serviceAdvisor: saName,
-            serviceAdvisorId: saId,
-            tempVehicle: false,
-            tempRegNo: undefined,
-            jcOpened: true,
-          }
-        : v
-    ))
+    setVehicles(
+      vehicles.map((v) =>
+        v.id === vehicleId
+          ? {
+              ...v,
+              serviceAdvisor: saName,
+              serviceAdvisorId: saId,
+              tempVehicle: false,
+              tempRegNo: undefined,
+              jcOpened: true,
+            }
+          : v
+      )
+    )
     setAssigningVehicleId(null)
   }
 
   const handleSetTempVehicle = (vehicleId: string) => {
-    const vehicle = vehicles.find(v => v.id === vehicleId)
+    const vehicle = vehicles.find((v) => v.id === vehicleId)
     if (vehicle) {
       setTempVehicleModal({ vehicleId, regNo: vehicle.tempRegNo || vehicle.regNo })
       setTempRegInput(vehicle.tempRegNo || '')
@@ -240,87 +260,164 @@ export default function ReceptionDashboard() {
 
   const handleSaveTempVehicle = () => {
     if (tempVehicleModal && tempRegInput.trim()) {
-      setVehicles(vehicles.map(v =>
-        v.id === tempVehicleModal.vehicleId
-          ? { ...v, tempVehicle: true, tempRegNo: tempRegInput.trim(), regNo: tempRegInput.trim() }
-          : v
-      ))
+      setVehicles(
+        vehicles.map((v) =>
+          v.id === tempVehicleModal.vehicleId
+            ? { ...v, tempVehicle: true, tempRegNo: tempRegInput.trim(), regNo: tempRegInput.trim() }
+            : v
+        )
+      )
       setTempVehicleModal(null)
       setTempRegInput('')
     }
   }
 
   const handleRemoveTempVehicle = (vehicleId: string) => {
-    const vehicle = vehicles.find(v => v.id === vehicleId)
+    const vehicle = vehicles.find((v) => v.id === vehicleId)
     if (vehicle) {
-      setVehicles(vehicles.map(v =>
-        v.id === vehicleId
-          ? { ...v, tempVehicle: false, tempRegNo: undefined, regNo: vehicle.tempRegNo || vehicle.regNo }
-          : v
-      ))
+      setVehicles(
+        vehicles.map((v) =>
+          v.id === vehicleId
+            ? { ...v, tempVehicle: false, tempRegNo: undefined, regNo: vehicle.tempRegNo || vehicle.regNo }
+            : v
+        )
+      )
     }
   }
+
+  const metricVehicles = (() => {
+    switch (selectedMetric) {
+      case 'totalGateIn':
+        return vehicles
+      case 'walkIns':
+        return walkInVehicles
+      case 'appointment':
+        return appointmentVehicles
+      case 'jcOpened':
+        return jcOpenedVehicles
+      case 'saAllocation':
+        return saAllocatedVehicles
+      default:
+        return []
+    }
+  })()
+
+  const filteredMetricVehicles = metricVehicles.filter((vehicle) => {
+    const q = metricSearch.toLowerCase()
+    if (!q) return true
+    return (
+      vehicle.regNo.toLowerCase().includes(q) ||
+      vehicle.customerName.toLowerCase().includes(q) ||
+      (vehicle.serviceAdvisor || '').toLowerCase().includes(q)
+    )
+  })
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Reception Dashboard</h1>
+        <h1 className="text-3xl font-bold text-gray-900">Front Office Dashboard</h1>
         <p className="text-gray-600 mt-1">Service Advisor allocation and vehicle management</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMetric('totalGateIn')
+            setMetricSearch('')
+          }}
+          className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-primary-300 hover:shadow-md transition"
+        >
           <div className="text-2xl font-bold text-primary-600">{vehicles.length}</div>
-          <div className="text-sm text-gray-600 mt-1">Total Vehicles</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-green-600">{vehiclesWithSA.length}</div>
-          <div className="text-sm text-gray-600 mt-1">SA Assigned</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-orange-600">{vehiclesWithoutSA.length}</div>
-          <div className="text-sm text-gray-600 mt-1">Pending Assignment</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-blue-600">
-            {vehiclesWithSA.length}
-          </div>
+          <div className="text-sm text-gray-600 mt-1">Total Gate In</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMetric('walkIns')
+            setMetricSearch('')
+          }}
+          className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-primary-300 hover:shadow-md transition"
+        >
+          <div className="text-2xl font-bold text-orange-600">{walkInVehicles.length}</div>
+          <div className="text-sm text-gray-600 mt-1">Walk Ins</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMetric('appointment')
+            setMetricSearch('')
+          }}
+          className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-primary-300 hover:shadow-md transition"
+        >
+          <div className="text-2xl font-bold text-indigo-600">{appointmentVehicles.length}</div>
+          <div className="text-sm text-gray-600 mt-1">Appointment</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMetric('jcOpened')
+            setMetricSearch('')
+          }}
+          className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-primary-300 hover:shadow-md transition"
+        >
+          <div className="text-2xl font-bold text-blue-600">{jcOpenedVehicles.length}</div>
           <div className="text-sm text-gray-600 mt-1">JC Opened</div>
-        </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMetric('saAllocation')
+            setMetricSearch('')
+          }}
+          className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-primary-300 hover:shadow-md transition"
+        >
+          <div className="text-2xl font-bold text-green-600">{saAllocatedVehicles.length}</div>
+          <div className="text-sm text-gray-600 mt-1">SA Allocation</div>
+        </button>
       </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="flex space-x-8">
           <button
-            onClick={() => setActiveTab('unassigned')}
+            onClick={() => setActiveTab('jc-pending')}
             className={`py-4 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'unassigned'
+              activeTab === 'jc-pending'
                 ? 'border-primary-500 text-primary-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            Un Allocated ({vehiclesWithoutSA.length})
+            JC Pending ({jcPendingVehicles.length})
           </button>
           <button
-            onClick={() => setActiveTab('assigned')}
+            onClick={() => setActiveTab('jc-opened')}
             className={`py-4 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'assigned'
+              activeTab === 'jc-opened'
                 ? 'border-primary-500 text-primary-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            In Service ({vehiclesWithSA.length})
+            JC Opened ({jcOpenedVehicles.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('temp-mapping')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'temp-mapping'
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Temp Registration Mapping ({tempMappedVehicles.length})
           </button>
         </nav>
       </div>
 
       {/* Tab Content */}
       <div>
-        {/* Unallocated Vehicles Tab */}
-        {activeTab === 'unassigned' && (
+        {activeTab === 'jc-pending' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -333,11 +430,10 @@ export default function ReceptionDashboard() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">JC Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Appointment</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Re-Assign Service Advisor</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Temporary Vehicle</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {vehiclesWithoutSA.map((vehicle) => (
+                  {jcPendingVehicles.map((vehicle) => (
                     <tr key={vehicle.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
@@ -352,9 +448,7 @@ export default function ReceptionDashboard() {
                             {vehicle.regNo}
                           </span>
                           {vehicle.tempVehicle && (
-                            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
-                              Temp
-                            </span>
+                            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">Temp</span>
                           )}
                         </div>
                       </td>
@@ -370,25 +464,15 @@ export default function ReceptionDashboard() {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {vehicle.jcOpened ? (
-                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                            JC Opened
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                            JC Not Opened
-                          </span>
-                        )}
+                        <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
+                          JC Pending
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {vehicle.appointment ? (
-                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                            Yes
-                          </span>
+                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">Yes</span>
                         ) : (
-                          <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                            Walk-in
-                          </span>
+                          <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">Walk-in</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -400,42 +484,18 @@ export default function ReceptionDashboard() {
                           <span>Re-Assign SA</span>
                         </button>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {vehicle.tempVehicle ? (
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs text-orange-600 font-medium">Temp: {vehicle.tempRegNo}</span>
-                            <button
-                              onClick={() => handleRemoveTempVehicle(vehicle.id)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded"
-                              title="Remove Temporary Vehicle"
-                            >
-                              <FiX className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => handleSetTempVehicle(vehicle.id)}
-                            className="px-3 py-1.5 border border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 text-sm"
-                          >
-                            Set Temp Vehicle
-                          </button>
-                        )}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {vehiclesWithoutSA.length === 0 && (
-                <div className="p-8 text-center text-gray-500">
-                  All vehicles have Service Advisor assigned
-                </div>
+              {jcPendingVehicles.length === 0 && (
+                <div className="p-8 text-center text-gray-500">No JC pending vehicles</div>
               )}
             </div>
           </div>
         )}
 
-        {/* In Service (JC Opened) Vehicles Tab */}
-        {activeTab === 'assigned' && (
+        {activeTab === 'jc-opened' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -452,7 +512,7 @@ export default function ReceptionDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {vehiclesWithSA.map((vehicle) => (
+                  {jcOpenedVehicles.map((vehicle) => (
                     <tr key={vehicle.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
@@ -468,19 +528,13 @@ export default function ReceptionDashboard() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">{vehicle.customerName}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">
-                          {vehicle.issue}
-                        </span>
+                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">{vehicle.issue}</span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {vehicle.appointment ? (
-                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                            Yes
-                          </span>
+                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">Yes</span>
                         ) : (
-                          <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                            Walk-in
-                          </span>
+                          <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">Walk-in</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -490,9 +544,7 @@ export default function ReceptionDashboard() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                          JC Opened
-                        </span>
+                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">JC Opened</span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <button
@@ -507,15 +559,175 @@ export default function ReceptionDashboard() {
                   ))}
                 </tbody>
               </table>
-              {vehiclesWithSA.length === 0 && (
-                <div className="p-8 text-center text-gray-500">
-                  No JC opened vehicles in service
-                </div>
+              {jcOpenedVehicles.length === 0 && (
+                <div className="p-8 text-center text-gray-500">No JC opened vehicles in service</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'temp-mapping' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">In Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Registration Number</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Temp Mapping</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer Name</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {jcPendingVehicles.map((vehicle) => (
+                    <tr key={vehicle.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">{format(vehicle.inTime, 'HH:mm:ss')}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{vehicle.regNo}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {vehicle.tempVehicle ? (
+                          <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs font-medium">
+                            {vehicle.tempRegNo}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400">Not mapped</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">{vehicle.customerName}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {vehicle.tempVehicle ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleSetTempVehicle(vehicle.id)}
+                              className="px-3 py-1.5 border border-orange-300 text-orange-700 rounded-lg hover:bg-orange-50 text-sm"
+                            >
+                              Update Mapping
+                            </button>
+                            <button
+                              onClick={() => handleRemoveTempVehicle(vehicle.id)}
+                              className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 text-sm"
+                            >
+                              Remove Mapping
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleSetTempVehicle(vehicle.id)}
+                            className="px-3 py-1.5 border border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 text-sm"
+                          >
+                            Set Mapping
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {jcPendingVehicles.length === 0 && (
+                <div className="p-8 text-center text-gray-500">No JC pending vehicles for mapping</div>
               )}
             </div>
           </div>
         )}
       </div>
+
+      {/* Attendance Mapping Prompt (first page open per session) */}
+      {showAttendancePrompt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900">Attendance Mapping Check</h3>
+            <p className="text-sm text-gray-600 mt-2">
+              Is attendance mapping completed for Front Office operations?
+            </p>
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setAttendanceMappingStatus('done')
+                  setShowAttendancePrompt(false)
+                }}
+                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium"
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAttendanceMappingStatus('not-done')
+                  setShowAttendancePrompt(false)
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Not Done
+              </button>
+            </div>
+            {attendanceMappingStatus === 'not-done' && (
+              <p className="text-xs text-orange-600 mt-3">
+                Please complete attendance mapping before proceeding with allocation.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Metric Vehicles Modal */}
+      {selectedMetric && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {selectedMetric === 'totalGateIn' && 'Total Gate In Vehicles'}
+                {selectedMetric === 'walkIns' && 'Walk In Vehicles'}
+                {selectedMetric === 'appointment' && 'Appointment Vehicles'}
+                {selectedMetric === 'jcOpened' && 'JC Opened Vehicles'}
+                {selectedMetric === 'saAllocation' && 'SA Allocation Vehicles'}
+              </h3>
+              <button
+                onClick={() => setSelectedMetric(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 border-b border-gray-200">
+              <input
+                type="text"
+                value={metricSearch}
+                onChange={(e) => setMetricSearch(e.target.value)}
+                placeholder="Search by registration, customer or service advisor..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+            </div>
+            <div className="max-h-[55vh] overflow-y-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reg No</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">In Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Appointment</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">SA</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {filteredMetricVehicles.map((vehicle) => (
+                    <tr key={vehicle.id}>
+                      <td className="px-6 py-3 text-sm font-medium">{vehicle.regNo}</td>
+                      <td className="px-6 py-3 text-sm">{vehicle.customerName}</td>
+                      <td className="px-6 py-3 text-sm">{format(vehicle.inTime, 'HH:mm:ss')}</td>
+                      <td className="px-6 py-3 text-sm">{vehicle.appointment ? 'Yes' : 'Walk-in'}</td>
+                      <td className="px-6 py-3 text-sm">{vehicle.serviceAdvisor || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredMetricVehicles.length === 0 && (
+                <div className="p-8 text-center text-gray-500">No vehicles found</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Temporary Vehicle Modal */}
       {tempVehicleModal && (
@@ -562,7 +774,7 @@ export default function ReceptionDashboard() {
 
       {/* Service Advisor Assignment Modal */}
       {assigningVehicleId && (() => {
-        const vehicle = vehicles.find(v => v.id === assigningVehicleId)
+        const vehicle = vehicles.find((v) => v.id === assigningVehicleId)
         if (!vehicle) return null
         const matchingSAs = getMatchingServiceAdvisors(vehicle.issue)
         return (
@@ -570,7 +782,7 @@ export default function ReceptionDashboard() {
             <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Assign Service Advisor</h3>
+                  <h3 className="text-lg font-semibold text-gray-900">Re-Assign Service Advisor</h3>
                   <p className="text-sm text-gray-600 mt-1">
                     Vehicle: {vehicle.regNo} | Issue: <span className="font-medium">{vehicle.issue}</span>
                   </p>
@@ -644,9 +856,7 @@ export default function ReceptionDashboard() {
                           e.stopPropagation()
                           handleAssignSA(vehicle.id, sa.id, sa.name)
                         }}
-                      >
-                        Assign
-                      </button>
+                      >Re-Assign</button>
                     </div>
                   </div>
                 ))}

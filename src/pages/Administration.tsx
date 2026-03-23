@@ -11,7 +11,8 @@ import {
   FiXCircle,
   FiPlus,
   FiSave,
-  FiTrash2
+  FiTrash2,
+  FiUpload
 } from 'react-icons/fi'
 
 interface WorkingHours {
@@ -229,6 +230,7 @@ const mockVehicleRejections: VehicleRejection[] = [
 export default function Administration() {
   const [activeTab, setActiveTab] = useState<'settings' | 'vehicle-rejection'>('settings')
   const [settingsTab, setSettingsTab] = useState<'working-hours' | 'alerts' | 'manpower' | 'cameras'>('working-hours')
+  const [subStation, setSubStation] = useState<'Workshop' | 'BodyShop'>('Workshop')
   const [workingHours, setWorkingHours] = useState<WorkingHours[]>(mockWorkingHours)
   const [alertThresholds, setAlertThresholds] = useState<AlertThreshold[]>(mockAlertThresholds)
   const [manpowerAttendance, setManpowerAttendance] = useState<ManpowerAttendance[]>(mockManpowerAttendance)
@@ -360,6 +362,40 @@ export default function Administration() {
     }
   }
 
+  const handleAttendanceCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const raw = String(reader.result || '')
+      const rows = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (rows.length <= 1) return
+
+      const parseStatus = (value: string): 'present' | 'absent' =>
+        value.trim().toLowerCase() === 'absent' ? 'absent' : 'present'
+
+      const newEntries: ManpowerAttendance[] = rows.slice(1).map((line, idx) => {
+        const [name = '', role = '', date = '', status = 'present', lastSynced = ''] = line
+          .split(',')
+          .map((cell) => cell.trim())
+        return {
+          id: `csv-${Date.now()}-${idx}`,
+          name: name || `Employee ${idx + 1}`,
+          role: role || 'Technician',
+          date: date || new Date().toISOString().split('T')[0],
+          status: parseStatus(status),
+          lastSynced: lastSynced || new Date().toLocaleString(),
+        }
+      })
+      setManpowerAttendance((prev) => [...newEntries, ...prev])
+    }
+    reader.readAsText(file)
+    event.target.value = ''
+  }
+
   const tabs = [
     { id: 'settings', label: 'Settings' },
     { id: 'vehicle-rejection', label: 'Internal Vehicles' },
@@ -397,6 +433,27 @@ export default function Administration() {
         {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div>
+            <div className="mb-6">
+              <div className="text-md md:text-3xl font-semibold tracking-tight text-gray-900">
+                Settings & Configuration
+              </div>
+              <p className="text-gray-500 tracking-tight mt-1">
+                Centralized hub for managing system preferences, working hours, and operational configurations.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-4">
+                <div className="text-sm font-semibold text-gray-500 uppercase whitespace-nowrap tracking-tight">
+                  Choose the Sub Station to configure:
+                </div>
+                <select
+                  value={subStation}
+                  onChange={(e) => setSubStation(e.target.value as 'Workshop' | 'BodyShop')}
+                  className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm"
+                >
+                  <option value="Workshop">Workshop</option>
+                  <option value="BodyShop">BodyShop</option>
+                </select>
+              </div>
+            </div>
             {/* Settings Sub-Tabs */}
             <div className="border-b border-gray-200 mb-6">
               <nav className="flex space-x-8">
@@ -418,7 +475,7 @@ export default function Administration() {
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Alerts Threshold
+                  Alerts Configuration
                 </button>
                 <button
                   onClick={() => setSettingsTab('manpower')}
@@ -428,7 +485,7 @@ export default function Administration() {
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Manpower Attendance
+                  Manpower Management
                 </button>
                 <button
                   onClick={() => setSettingsTab('cameras')}
@@ -438,7 +495,7 @@ export default function Administration() {
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Camera Management
+                  Camera Configuration
                 </button>
               </nav>
             </div>
@@ -630,10 +687,25 @@ export default function Administration() {
               {/* Manpower Attendance Details Tab */}
               {settingsTab === 'manpower' && (
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-2">Manpower Attendance Details</h2>
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                    <h2 className="text-lg font-semibold text-gray-900">Manpower Attendance Details</h2>
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm cursor-pointer hover:bg-gray-50">
+                      <FiUpload className="w-4 h-4" />
+                      <span>CSV Bulk Upload</span>
+                      <input
+                        type="file"
+                        accept=".csv,text/csv"
+                        className="hidden"
+                        onChange={handleAttendanceCsvUpload}
+                      />
+                    </label>
+                  </div>
                   <p className="text-xs text-gray-500 mb-4">
                     Status is marked as <span className="font-semibold">Present</span> by default. Update to{' '}
                     <span className="font-semibold">Absent</span> when a resource is not available.
+                  </p>
+                  <p className="text-[11px] text-gray-500 mb-3">
+                    CSV format: <span className="font-mono">name,role,date,status,lastSynced</span>
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
