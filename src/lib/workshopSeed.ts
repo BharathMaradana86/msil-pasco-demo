@@ -70,7 +70,8 @@ export const USE_LOCAL_WORKSHOP_SEED =
  */
 export function getWorkshopApiBase(): string {
   // return "https://encouraging-instrumental-mae-pie.trycloudflare.com"4
-  return "http://localhost:5001"
+  // return "http://localhost:5001"
+  return "https://how-price-tunes-ice.trycloudflare.com"
   const v = import.meta.env.VITE_WORKSHOP_API_URL as string | undefined
   if (v === '' || v === undefined) return ''
   return String(v).replace(/\/$/, '')
